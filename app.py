@@ -636,6 +636,47 @@ def render_screenshot(title: str, img_base64: str, badge_class: str):
             key=f"download_{title}_{datetime.now().timestamp()}"
         )
 
+def auto_install_browsers():
+    """앱 시작 시 Playwright 브라우저 자동 설치"""
+    cache_file = Path(tempfile.gettempdir()) / ".playwright_browsers_ok_v2"
+    
+    if cache_file.exists():
+        return True
+    
+    try:
+        # 시스템 의존성과 함께 Chromium 설치
+        result1 = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+            capture_output=True, text=True, timeout=600
+        )
+        # WebKit 설치
+        result2 = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--with-deps", "webkit"],
+            capture_output=True, text=True, timeout=600
+        )
+        
+        # 설치 결과 확인
+        if result1.returncode == 0 or result2.returncode == 0:
+            cache_file.touch()
+            return True
+        else:
+            # 의존성 없이 재시도
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], timeout=300)
+            subprocess.run([sys.executable, "-m", "playwright", "install", "webkit"], timeout=300)
+            cache_file.touch()
+            return True
+    except Exception as e:
+        print(f"Browser install error: {e}")
+        # 마지막 시도
+        try:
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], timeout=300)
+            cache_file.touch()
+            return True
+        except:
+            pass
+    
+    return False
+
 def main():
     # 페이지 설정
     st.set_page_config(
@@ -654,11 +695,20 @@ def main():
     # 스크린샷 디렉토리 생성
     Path(SCREENSHOTS_DIR).mkdir(parents=True, exist_ok=True)
     
-    # 첫 실행 시 브라우저 자동 설치 시도
-    cache_file = Path(tempfile.gettempdir()) / ".playwright_installed"
-    if PLAYWRIGHT_AVAILABLE and cache_file.exists():
-        if 'browsers_ready' not in st.session_state:
-            st.session_state.browsers_ready = True
+    # 앱 시작 시 브라우저 자동 설치 (백그라운드)
+    if 'browser_install_attempted' not in st.session_state:
+        st.session_state.browser_install_attempted = True
+        if PLAYWRIGHT_AVAILABLE:
+            cache_file = Path(tempfile.gettempdir()) / ".playwright_browsers_installed"
+            if not cache_file.exists():
+                with st.spinner("🔧 첫 실행: 브라우저 설치 중... (1-2분 소요)"):
+                    if auto_install_browsers():
+                        st.session_state.browsers_ready = True
+                        st.success("✅ 브라우저 설치 완료!")
+                    else:
+                        st.warning("⚠️ 브라우저 설치 실패. 일부 기능이 제한될 수 있습니다.")
+            else:
+                st.session_state.browsers_ready = True
     
     # 세션 상태 초기화
     if 'logged_in' not in st.session_state:
@@ -680,26 +730,15 @@ def main():
         st.markdown('<p style="color: #666; font-size: 0.8rem;">웹 표준/호환성 증빙 자료 생성기</p>', unsafe_allow_html=True)
         st.markdown("---")
         
-        # Playwright 상태 표시 및 브라우저 설치
-        if 'browsers_ready' not in st.session_state:
-            st.session_state.browsers_ready = False
-        
+        # Playwright 상태 표시
         if PLAYWRIGHT_AVAILABLE:
-            if st.session_state.browsers_ready:
-                st.success("✅ Playwright & 브라우저 준비됨")
+            cache_file = Path(tempfile.gettempdir()) / ".playwright_browsers_installed"
+            if cache_file.exists() or st.session_state.get('browsers_ready', False):
+                st.success("✅ 시스템 준비 완료")
             else:
-                st.warning("⚠️ 브라우저 설치 필요")
-                if st.button("🔧 브라우저 설치", use_container_width=True):
-                    with st.spinner("브라우저 설치 중... (1-2분 소요)"):
-                        if check_and_install_playwright():
-                            st.session_state.browsers_ready = True
-                            st.success("✅ 설치 완료!")
-                            st.rerun()
-                        else:
-                            st.error("설치 실패. 다시 시도해주세요.")
+                st.info("🔄 브라우저 준비 중...")
         else:
             st.error("❌ Playwright 미설치")
-            st.info("requirements.txt 확인 필요")
         
         st.markdown("---")
         
